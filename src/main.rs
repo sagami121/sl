@@ -9,23 +9,28 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, size},
 };
 use std::io::{stdout, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "SL (Steam Locomotive) runs across your terminal.", long_about = None)]
+#[command(author, version, about = "sl - Cure your bad habit of mistyping", long_about = "sl is a highly developed animation program for curing your bad habit of mistyping. SL stands for Steam Locomotive.")]
 struct Args {
-    #[arg(short = 'a', long)]
+    #[arg(short = 'a', long, help = "An accident seems to happen. You'll feel pity for people who cry for help.")]
     accident: bool,
 
-    #[arg(short = 'F', long)]
+    #[arg(short = 'F', long, help = "It flies.")]
     fly: bool,
 
-    #[arg(short = 'l', long)]
+    #[arg(short = 'l', long, help = "Becomes smaller.")]
     logo: bool,
 
     #[arg(short = 'c', long)]
     c51: bool,
+
+    #[arg(short = 'e', long, help = "Allow interrupt by Ctrl+C.")]
+    interrupt: bool,
 }
 
 struct Smoke {
@@ -107,9 +112,15 @@ impl App {
     }
 
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Ignore SIGINT like the original
-        unsafe {
-            let _ = signal_hook::low_level::register(signal_hook::consts::SIGINT, || {});
+        let interrupted = Arc::new(AtomicBool::new(false));
+        if !self.args.interrupt {
+            // Ignore SIGINT like the original
+            unsafe {
+                let _ = signal_hook::low_level::register(signal_hook::consts::SIGINT, || {});
+            }
+        } else {
+            #[cfg(not(windows))]
+            signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&interrupted))?;
         }
 
         enable_raw_mode()?;
@@ -130,8 +141,16 @@ impl App {
         };
 
         loop {
-            if x < -length {
+            if x < -length || interrupted.load(Ordering::Relaxed) {
                 break;
+            }
+
+            if self.args.interrupt && crossterm::event::poll(Duration::from_millis(0))? {
+                if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                    if key.code == crossterm::event::KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                        break;
+                    }
+                }
             }
 
             queue!(out, Clear(ClearType::All))?;
